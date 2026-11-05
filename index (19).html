@@ -1,0 +1,997 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Label Scanner</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
+<style>
+:root{
+  --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#8b93a5;
+  --ok:#2fbf71; --warn:#e0a92b; --bad:#e5534b; --accent:#4c8dff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0}
+#status{font-size:12px;color:var(--muted);text-align:right}
+#cam{position:relative;width:100%;height:50vh;background:#000;overflow:hidden}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#guide{position:absolute;left:5%;width:90%;top:20%;height:60%;border:2px solid rgba(255,255,255,.85);border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.45);transition:border-color .15s, box-shadow .15s}
+#guide.lines{top:36%;height:28%}
+#guide.hit{border-color:var(--warn)}
+#focusDot{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border:2px solid #ffd54a;border-radius:50%;pointer-events:none;opacity:0;transition:opacity .4s}
+#focusDot.show{opacity:1}
+.ctl{display:grid;grid-template-columns:auto 1fr auto;gap:8px 10px;align-items:center;font-size:13px;color:var(--muted);margin-top:8px}
+.ctl input[type=range]{width:100%}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:6px 10px}
+.seg button.on{background:var(--accent);color:#fff}
+#snapBtn{font-weight:600}
+#guide.locked{border-color:var(--ok);box-shadow:0 0 0 9999px rgba(20,90,50,.55)}
+#guide.dup{border-color:var(--accent);box-shadow:0 0 0 9999px rgba(30,50,110,.55)}
+#flash{position:absolute;left:0;right:0;top:40%;text-align:center;font:700 22px system-ui;color:#fff;text-shadow:0 2px 6px #000;pointer-events:none;opacity:0;transition:opacity .2s}
+#flash.show{opacity:1}
+#hint{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:13px;color:#fff;text-shadow:0 1px 3px #000;padding:0 10px}
+#camBtns{position:absolute;top:8px;right:8px;display:flex;gap:6px}
+#rates{position:absolute;top:10px;left:10px;font:11px ui-monospace,Consolas,monospace;color:#fff;text-shadow:0 1px 2px #000}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:8px 12px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.5}
+select{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:8px;max-width:100%}
+.act{display:inline-block;font-size:11px;padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;border:1px solid var(--line);color:var(--muted);cursor:help}
+.act.OK{color:var(--ok);border-color:var(--ok)}
+.act.DryRun,.act.Exists{color:var(--accent);border-color:var(--accent)}
+.act.Error{color:var(--bad);border-color:var(--bad)}
+.act.Pending{color:var(--warn);border-color:var(--warn)}
+main{padding:12px 14px 40px;max-width:720px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.card.done{border-color:rgba(47,191,113,.5)}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.name{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.val{font:600 18px/1.3 ui-monospace,Consolas,monospace;word-break:break-all}
+.val.small{font-size:13px;font-weight:400}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.badge.ok{color:var(--ok);border-color:var(--ok)}
+.badge.warn{color:var(--warn);border-color:var(--warn)}
+.bar{height:4px;background:var(--line);border-radius:4px;margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.card.done .bar i{background:var(--ok)}
+.cands{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.cand{font:12px ui-monospace,Consolas,monospace;padding:3px 7px;border-radius:6px;border:1px dashed var(--line);color:var(--muted);background:transparent}
+.note{font-size:12px;color:var(--muted);margin-top:4px}
+.note.ok{color:var(--ok)}
+.note.bad{color:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.settings{font-size:13px;color:var(--muted);display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin:8px 0}
+.settings label{display:flex;align-items:center;gap:6px}
+.settings input[type=number]{width:56px;font:inherit;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 6px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+td.mono{font-family:ui-monospace,Consolas,monospace}
+td .del{padding:2px 8px;font-size:12px}
+.src{font-size:11px;color:var(--muted)}
+details{margin-top:10px}
+summary{color:var(--muted);font-size:13px;cursor:pointer}
+pre{white-space:pre-wrap;font-size:11px;color:var(--muted);background:var(--panel);padding:8px;border-radius:8px;max-height:180px;overflow:auto}
+#preview{max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--line)}
+h2{font-size:14px;margin:18px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+</style>
+</head>
+<body>
+<header>
+  <h1>Label Scanner</h1>
+  <span id="status">Loading…</span>
+</header>
+
+<div id="cam">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="guide"></div>
+  <div id="focusDot"></div>
+  <div id="flash"></div>
+  <div id="rates"></div>
+  <div id="camBtns"><button id="torchBtn" hidden>Light</button></div>
+  <div id="hint">Fill the box with the label · tap the picture to focus there · Snap for a sharp still</div>
+</div>
+
+<main>
+  <div class="row">
+    <button id="startBtn" class="primary" disabled>Start camera</button>
+    <button id="pauseBtn" disabled>Pause</button>
+    <button id="snapBtn" disabled title="Take a full-resolution still and read it several ways">Snap</button>
+    <button id="resetBtn">Clear current</button>
+    <button id="boxBtn" title="Box size">Box: label</button>
+    <select id="camSel" hidden title="Camera"></select>
+  </div>
+
+  <details class="card" id="camCtl" hidden open>
+    <summary>Camera controls <span id="camInfo" class="src"></span></summary>
+    <div class="ctl">
+      <span>Focus</span>
+      <span class="seg" id="focusSeg"><button data-f="auto">Auto</button><button data-f="lock">Locked</button></span>
+      <span></span>
+      <span id="fdLbl" hidden>Distance</span><input type="range" id="fdRange" hidden><span id="fdVal" class="src" hidden></span>
+      <span id="zLbl" hidden>Zoom</span><input type="range" id="zRange" hidden><span id="zVal" class="src" hidden></span>
+      <span id="exLbl" hidden>Brightness</span><input type="range" id="exRange" hidden><span id="exVal" class="src" hidden></span>
+    </div>
+    <div class="note">Tip: glossy labels glare under the light — try it off and lower Brightness. Zoom 1.5–2× from farther away usually beats getting close.</div>
+  </details>
+
+  <div class="card" id="stationCard" hidden>
+    <div class="top"><span class="name">Scan station</span><span class="badge ok" id="stationBadge">connected</span></div>
+    <div class="settings" style="margin:6px 0 0">
+      <label><input type="checkbox" id="stZebra"> Zebra label</label>
+      <label><input type="checkbox" id="stLaser"> Laser sheet</label>
+      <label><input type="checkbox" id="stIvanti"> Ivanti asset <span id="ivMode" class="src"></span></label>
+    </div>
+    <div class="note" id="stationInfo"></div>
+  </div>
+
+  <div class="card" id="dmCard">
+    <div class="top"><span class="name">2D barcode</span><span class="badge" id="dmBadge">searching</span></div>
+    <div class="val small" id="dmVal">—</div>
+  </div>
+  <div id="fields"></div>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="settings">
+      <label><input type="checkbox" id="reqSN" checked> Require serial</label>
+      <label><input type="checkbox" id="reqPN" checked> Require part #</label>
+      <label><input type="checkbox" id="reqMAC"> Require MAC</label>
+      <label><input type="checkbox" id="autoNext" checked> Auto-save &amp; continue</label>
+      <label><input type="checkbox" id="useOCR" checked> Text OCR</label>
+      <label><input type="checkbox" id="useDM" checked> 2D barcode</label>
+      <label>OCR matching reads <input type="number" id="need" min="2" max="8" value="3"></label>
+      <label>Serial length <input type="number" id="snLen" min="6" max="16" value="10"></label>
+    </div>
+  </details>
+
+  <details>
+    <summary>Debug: last OCR frame</summary>
+    <canvas id="preview"></canvas>
+    <pre id="raw">(nothing yet)</pre>
+  </details>
+
+  <h2>Saved scans <span id="count"></span></h2>
+  <div class="row">
+    <button id="csvBtn">Export CSV</button>
+    <button id="clearBtn">Clear list</button>
+  </div>
+  <table>
+    <thead><tr><th>Serial</th><th>Part #</th><th>Model / MAC</th><th id="actHead" hidden>Station</th><th></th></tr></thead>
+    <tbody id="list"></tbody>
+  </table>
+</main>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- Known part numbers (base, without #option). Extend as needed. ----------
+const KNOWN_PN = {   // merged with the station's catalog when served by ScanStation.ps1
+  '5TW13AA': 'HP USB-C/A Universal Dock G2',
+  '5TW13UT': 'HP USB-C/A Universal Dock G2',
+  'BB3Q4UT': 'HP ProBook 4 G11 16'
+};
+
+const FIELDS = [
+  { key: 'sn',    label: 'Serial' },
+  { key: 'pn',    label: 'Part # / ProdID' },
+  { key: 'mac',   label: 'MAC' },
+  { key: 'model', label: 'Model text' }
+];
+const OCR_WORKERS = 2;
+
+const $ = id => document.getElementById(id);
+const video = $('video'), guide = $('guide'), statusEl = $('status');
+
+let scheduler = null, ocrReady = false, dmReady = false;
+const ocrWorkers = [];                    // [0] = PSM 6 (block), [1] = PSM 11 (sparse)
+let snapping = false;
+let stream = null, track = null, running = false;
+let cur;                                  // current label state
+let records = loadRecords();
+let lastDupSn = null;
+const stats = { dm: [], ocr: [] };        // timestamps for rate display
+
+// ---------- Startup ----------
+async function initOCR() {
+  scheduler = Tesseract.createScheduler();
+  for (let i = 0; i < OCR_WORKERS; i++) {
+    const w = await Tesseract.createWorker('eng', 1);
+    await w.setParameters({
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:/#-. ',
+      tessedit_pageseg_mode: i === 0 ? '6' : '11',   // two layouts read differently -> independent votes
+      preserve_interword_spaces: '1'
+    });
+    ocrWorkers.push(w);
+    scheduler.addWorker(w);
+  }
+  ocrReady = true;
+}
+async function initDM() {
+  if (!window.ZXingWASM) throw new Error('barcode library not loaded');
+  // Warm up the wasm so the first real frame isn't slow
+  await ZXingWASM.readBarcodes(new ImageData(8, 8), { formats: ['DataMatrix'] });
+  dmReady = true;
+}
+function setReadyStatus() {
+  const parts = [];
+  parts.push(dmReady ? 'barcode ✓' : 'barcode …');
+  parts.push(ocrReady ? 'OCR ✓' : 'OCR …');
+  statusEl.textContent = parts.join(' · ');
+  if (dmReady || ocrReady) $('startBtn').disabled = !!stream;
+}
+
+// ---------- Camera ----------
+async function startCamera() {
+  if (!window.isSecureContext) {
+    alert('Camera needs HTTPS (or localhost). Host this page on HTTPS, e.g. GitHub Pages.');
+    return;
+  }
+  const wanted = lsGet('labelScanCamera');
+  const base = { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: wanted ? { ...base, deviceId: { exact: wanted } } : { ...base, facingMode: { ideal: 'environment' } }
+    });
+  } catch (e) {
+    if (wanted) { lsSet('labelScanCamera', ''); stream = null; return startCamera(); }   // saved camera gone: fall back
+    alert('Could not open camera: ' + e.message); return;
+  }
+  video.srcObject = stream;
+  await video.play();
+  track = stream.getVideoTracks()[0];
+  fillCameraList();
+  await setupCameraControls();
+  $('startBtn').textContent = 'Camera on';
+  $('startBtn').disabled = true;
+  $('snapBtn').disabled = false;
+  $('pauseBtn').disabled = false;
+  running = true;
+  dmLoop();
+  ocrLoop();
+  rateLoop();
+}
+
+let torchOn = false;
+$('torchBtn').onclick = async () => {
+  torchOn = !torchOn;
+  try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (_) {}
+  $('torchBtn').textContent = torchOn ? 'Light off' : 'Light';
+};
+
+// ---------- Geometry: guide box (screen) -> video pixels (object-fit: cover) ----------
+function guideInVideo() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const cam = $('cam').getBoundingClientRect(), g = guide.getBoundingClientRect();
+  const scale = Math.max(cam.width / vw, cam.height / vh);
+  const ox = (cam.width - vw * scale) / 2, oy = (cam.height - vh * scale) / 2;
+  let sx = Math.max(0, (g.left - cam.left - ox) / scale);
+  let sy = Math.max(0, (g.top - cam.top - oy) / scale);
+  const sw = Math.min(vw - sx, g.width / scale), sh = Math.min(vh - sy, g.height / scale);
+  return { sx, sy, sw, sh, vw, vh };
+}
+
+// ---------- 2D barcode loop (fast path) ----------
+const dmCanvas = document.createElement('canvas');
+const dmCtx = dmCanvas.getContext('2d', { willReadFrequently: true });
+let dmFrame = 0;
+
+async function dmLoop() {
+  while (running) {
+    if (!dmReady || !$('useDM').checked || cur.done) { await sleep(120); continue; }
+    const r = guideInVideo();
+    if (!r) { await sleep(60); continue; }
+    // Alternate: guide crop at native resolution (small codes) and whole frame downscaled (wide view)
+    let src;
+    if (dmFrame % 2 === 0) src = { x: r.sx, y: r.sy, w: r.sw, h: r.sh, k: Math.min(1, 1600 / r.sw) };
+    else src = { x: 0, y: 0, w: r.vw, h: r.vh, k: Math.min(1, 1280 / Math.max(r.vw, r.vh)) };
+    dmCanvas.width = Math.round(src.w * src.k); dmCanvas.height = Math.round(src.h * src.k);
+    dmCtx.drawImage(video, src.x, src.y, src.w, src.h, 0, 0, dmCanvas.width, dmCanvas.height);
+    const img = dmCtx.getImageData(0, 0, dmCanvas.width, dmCanvas.height);
+    try {
+      const res = await ZXingWASM.readBarcodes(img, {
+        formats: ['DataMatrix', 'QRCode'],
+        tryHarder: dmFrame % 6 === 0,      // occasional thorough pass, otherwise fast
+        tryRotate: true, tryInvert: true,
+        maxNumberOfSymbols: 1
+      });
+      stats.dm.push(performance.now());
+      if (res.length && res[0].isValid) onBarcode(res[0].text, res[0].format);
+    } catch (_) {}
+    dmFrame++;
+    await sleep(15);
+  }
+}
+
+function parseBarcode(text) {
+  const out = {};
+  const snLen = +$('snLen').value || 10;
+  const toks = text.toUpperCase().split(/[,;|\x1d\x1e\r\n\t ]+/).filter(Boolean);
+  for (const t of toks) {
+    if (!out.pn && /^[A-Z0-9]{5,8}#[A-Z0-9]{3}$/.test(t)) out.pn = t;
+    else if (!out.mac && /^([0-9A-F]{2}[-:]?){5}[0-9A-F]{2}$/.test(t)) out.mac = t.replace(/[-:]/g, '').match(/../g).join('-');
+    else if (!out.sn && t.length === snLen && /^[A-Z0-9]+$/.test(t) && /[A-Z]/.test(t) && /\d/.test(t)) out.sn = t;
+  }
+  // Labeled formats like "S/N:XXXX P/N:YYYY" inside the code
+  const labeled = parseText(text);
+  for (const k of Object.keys(labeled)) if (!out[k]) out[k] = labeled[k];
+  delete out.model;
+  return out;
+}
+
+function onBarcode(text, format) {
+  cur.dmRaw = text; cur.dmFormat = format;
+  const found = parseBarcode(text);
+  let any = false;
+  for (const [k, v] of Object.entries(found)) {
+    const L = cur.locked[k];
+    if (L && L.source === 'barcode') continue;
+    if (L && L.value !== v) cur.conflicts[k] = L.value;   // OCR/manual disagreed with barcode
+    cur.locked[k] = { value: v, source: 'barcode' };
+    any = true;
+  }
+  if (any || !cur.dmSeen) { cur.dmSeen = true; render(); }
+  if (allDone()) onComplete();
+}
+
+// ---------- OCR loop (fallback + cross-check) ----------
+let inFlight = 0, ocrFrame = 0;
+const sharpHist = [];
+
+async function ocrLoop() {
+  while (running) {
+    if (!ocrReady || snapping || !$('useOCR').checked || cur.done || inFlight >= OCR_WORKERS) { await sleep(60); continue; }
+    const f = grabOcrFrame();
+    if (!f) { await sleep(60); continue; }
+    // Skip blurry frames: compare to the sharpest of the last ~2 seconds
+    sharpHist.push(f.sharp); if (sharpHist.length > 20) sharpHist.shift();
+    const best = Math.max(...sharpHist);
+    if (f.sharp < best * 0.7 && sharpHist.length > 4) { await sleep(40); continue; }
+    inFlight++;
+    const myLabel = cur.id;
+    scheduler.addJob('recognize', f.canvas).then(({ data }) => {
+      stats.ocr.push(performance.now());
+      if (myLabel !== cur.id || cur.done) return;
+      const found = data.confidence >= 20 ? parseText(data.text) : {};   // consensus does the real filtering
+      showDebug(f.canvas, data);
+      guide.classList.toggle('hit', Object.keys(found).length > 0);
+      addOcrReadings(found);
+      render();
+      if (allDone()) onComplete();
+    }).catch(() => {}).finally(() => { inFlight--; });
+    ocrFrame++;
+    await sleep(40);
+  }
+}
+
+function grabOcrFrame() {
+  const r = guideInVideo();
+  if (!r) return null;
+  // Short "text lines" box gets more pixels per character; keep total work small for speed
+  const targetW = guide.classList.contains('lines') ? 1400 : 1000;
+  return preprocess(video, r.sx, r.sy, r.sw, r.sh, targetW, false);
+}
+
+// Crop -> scale -> grayscale -> contrast stretch -> (optional unsharp) -> dark text on light
+function preprocess(src, sx, sy, sw, sh, targetW, sharpen) {
+  const k = targetW / sw;
+  const c = document.createElement('canvas');
+  c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  const img = ctx.getImageData(0, 0, c.width, c.height), d = img.data, W = c.width, H = c.height;
+  const gray = new Float32Array(W * H);
+  const hist = new Uint32Array(256), n = W * H;
+  for (let i = 0, p = 0; p < n; i += 4, p++) {
+    const v = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+    gray[p] = v; hist[v]++;
+  }
+  let g = 0, cnt = 0;
+  for (let y = 2; y < H - 2; y += 3) for (let x = 2; x < W - 2; x += 3) {
+    const p = y * W + x; g += Math.abs(gray[p] - gray[p + 1]) + Math.abs(gray[p] - gray[p + W]); cnt++;
+  }
+  const pct = q => { let s = 0; for (let v = 0; v < 256; v++) { s += hist[v]; if (s >= n * q) return v; } return 255; };
+  const lo = pct(0.02), hi = pct(0.98), med = pct(0.5);
+  const invert = med < (lo + hi) / 2;     // light text on dark label -> invert to dark-on-light
+  const span = Math.max(1, hi - lo);
+  let src2 = gray;
+  if (sharpen) {                           // unsharp mask: out = 1.8*x - 0.8*blur3x3(x)
+    src2 = new Float32Array(n);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const p = y * W + x;
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { src2[p] = gray[p]; continue; }
+      const b = (gray[p - W - 1] + gray[p - W] + gray[p - W + 1] + gray[p - 1] + gray[p] + gray[p + 1] + gray[p + W - 1] + gray[p + W] + gray[p + W + 1]) / 9;
+      src2[p] = 1.8 * gray[p] - 0.8 * b;
+    }
+  }
+  for (let i = 0, p = 0; p < n; i += 4, p++) {
+    let v = (src2[p] - lo) * 255 / span;
+    v = v < 0 ? 0 : v > 255 ? 255 : v;
+    if (invert) v = 255 - v;
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return { canvas: c, sharp: g / Math.max(1, cnt) / span };
+}
+
+// ---------- Camera controls: focus lock, tap-to-focus, zoom, brightness ----------
+let caps = {}, focusLocked = false;
+async function applyCam(c) {
+  try { await track.applyConstraints({ advanced: [c] }); return true; } catch (_) { return false; }
+}
+function camSettings() { try { return track.getSettings ? track.getSettings() : {}; } catch (_) { return {}; } }
+function setupRange(id, cap, key, fmt, saved) {
+  const show = !!(cap && cap.max > cap.min);
+  [id + 'Lbl', id + 'Range', id + 'Val'].forEach(x => $(x).hidden = !show);
+  if (!show) return;
+  const r = $(id + 'Range');
+  r.min = cap.min; r.max = cap.max; r.step = cap.step || (cap.max - cap.min) / 100;
+  const curV = camSettings()[key];
+  r.value = saved !== '' && !isNaN(+saved) ? Math.min(cap.max, Math.max(cap.min, +saved)) : (curV ?? cap.min);
+  $(id + 'Val').textContent = fmt(+r.value);
+  if (saved !== '' && !isNaN(+saved)) applyCam({ [key]: +r.value });
+  r.oninput = () => { $(id + 'Val').textContent = fmt(+r.value); };
+  r.onchange = async () => {
+    const extra = key === 'focusDistance' ? { focusMode: 'manual' } : {};
+    await applyCam({ ...extra, [key]: +r.value });
+    if (key !== 'focusDistance') lsSet('cam_' + key, r.value);
+    if (key === 'focusDistance') { focusLocked = true; paintFocus(); }
+  };
+}
+async function setupCameraControls() {
+  caps = track.getCapabilities ? track.getCapabilities() : {};
+  $('torchBtn').hidden = !caps.torch;
+  torchOn = false; $('torchBtn').textContent = 'Light';
+  if (caps.exposureMode && caps.exposureMode.includes('continuous')) await applyCam({ exposureMode: 'continuous' });
+  setupRange('z', caps.zoom, 'zoom', v => v.toFixed(1) + '×', lsGet('cam_zoom'));
+  setupRange('ex', caps.exposureCompensation, 'exposureCompensation', v => (v > 0 ? '+' : '') + v.toFixed(1), lsGet('cam_exposureCompensation'));
+  const fm = caps.focusMode || [];
+  const canLock = fm.includes('manual') || fm.includes('single-shot');
+  $('focusSeg').style.opacity = canLock ? 1 : .5;
+  focusLocked = canLock && lsGet('cam_focusLock') === '1';
+  if (focusLocked) await lockFocus(); else if (fm.includes('continuous')) await applyCam({ focusMode: 'continuous' });
+  const st = camSettings();
+  $('camInfo').textContent = `${st.width || video.videoWidth}×${st.height || video.videoHeight}` + (canLock ? '' : ' · focus control not supported by this camera');
+  $('camCtl').hidden = false;
+  paintFocus();
+}
+async function lockFocus() {
+  const fm = caps.focusMode || [];
+  // Hold focus where it is now. 'manual' + current distance is a true lock; 'single-shot' focuses once then holds.
+  const d = camSettings().focusDistance;
+  if (fm.includes('manual') && d != null && await applyCam({ focusMode: 'manual', focusDistance: d })) return true;
+  if (fm.includes('single-shot') && await applyCam({ focusMode: 'single-shot' })) return true;
+  return false;
+}
+function paintFocus() {
+  document.querySelectorAll('#focusSeg button').forEach(b => b.classList.toggle('on', (b.dataset.f === 'lock') === focusLocked));
+  const manual = (caps.focusMode || []).includes('manual') && caps.focusDistance && caps.focusDistance.max > caps.focusDistance.min;
+  ['fdLbl', 'fdRange', 'fdVal'].forEach(x => $(x).hidden = !(manual && focusLocked));
+  if (manual && focusLocked) {
+    const r = $('fdRange'), c = caps.focusDistance;
+    r.min = c.min; r.max = c.max; r.step = c.step || (c.max - c.min) / 100;
+    const d = camSettings().focusDistance; if (d != null) r.value = d;
+    $('fdVal').textContent = (+r.value).toFixed(2);
+    r.oninput = () => $('fdVal').textContent = (+r.value).toFixed(2);
+    r.onchange = () => applyCam({ focusMode: 'manual', focusDistance: +r.value });
+  }
+}
+$('focusSeg').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b || !track) return;
+  if (b.dataset.f === 'lock') {
+    focusLocked = await lockFocus();
+    if (!focusLocked) showFlash('This camera can’t lock focus');
+  } else {
+    focusLocked = false;
+    await applyCam({ focusMode: 'continuous' });
+  }
+  lsSet('cam_focusLock', focusLocked ? '1' : '0');
+  paintFocus();
+});
+// Tap the picture: focus at that spot once, then hold it there if focus is locked
+$('cam').addEventListener('click', async e => {
+  if (!track || e.target.closest('button') || e.target === guide && cur.done) return;
+  const camR = $('cam').getBoundingClientRect();
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scale = Math.max(camR.width / vw, camR.height / vh);
+  const x = ((e.clientX - camR.left) - (camR.width - vw * scale) / 2) / scale / vw;
+  const y = ((e.clientY - camR.top) - (camR.height - vh * scale) / 2) / scale / vh;
+  const dot = $('focusDot'); dot.style.left = (e.clientX - camR.left) + 'px'; dot.style.top = (e.clientY - camR.top) + 'px';
+  dot.classList.add('show'); setTimeout(() => dot.classList.remove('show'), 1200);
+  const fm = caps.focusMode || [];
+  const poi = caps.pointsOfInterest !== undefined || 'pointsOfInterest' in camSettings();
+  const c = {};
+  if (poi) c.pointsOfInterest = [{ x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) }];
+  if (fm.includes('single-shot')) c.focusMode = 'single-shot';
+  else if (fm.includes('continuous')) c.focusMode = 'continuous';
+  await applyCam(c);
+  sharpHist.length = 0;
+  if (focusLocked && fm.includes('manual')) {           // let it settle, then pin that distance
+    await sleep(1200);
+    const d = camSettings().focusDistance;
+    if (d != null) { await applyCam({ focusMode: 'manual', focusDistance: d }); paintFocus(); }
+  }
+});
+
+// Box size: full label vs. just the text lines (faster, more pixels per letter)
+function paintBox() {
+  const lines = lsGet('boxLines') === '1';
+  guide.classList.toggle('lines', lines);
+  $('boxBtn').textContent = lines ? 'Box: text lines' : 'Box: label';
+}
+$('boxBtn').onclick = () => { lsSet('boxLines', lsGet('boxLines') === '1' ? '0' : '1'); paintBox(); sharpHist.length = 0; };
+
+// ---------- Snap: full-resolution still, read several ways ----------
+async function grabStill() {
+  if (window.ImageCapture) {
+    try {
+      const blob = await new ImageCapture(track).takePhoto();
+      return await createImageBitmap(blob);
+    } catch (_) {}
+  }
+  const c = document.createElement('canvas');                // fallback: current video frame
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  return c;
+}
+$('snapBtn').onclick = async () => {
+  if (snapping || !track) return;
+  snapping = true;
+  const btn = $('snapBtn'); btn.disabled = true; btn.textContent = 'Reading…';
+  const label = cur.id;
+  try {
+    const r = guideInVideo();
+    const still = await grabStill();
+    const PW = still.width, PH = still.height;
+    // Guide box as a fraction of the video frame, widened 12% because photo framing can differ slightly
+    const fx = r.sx / r.vw, fy = r.sy / r.vh, fw = r.sw / r.vw, fh = r.sh / r.vh, m = 0.12;
+    const vAsp = r.vw / r.vh, pAsp = PW / PH;
+    // Photo may be wider/taller than the video stream (e.g. 4:3 photo, 16:9 video cropped from its centre)
+    let ox = 0, oy = 0, cw = PW, ch = PH;
+    if (pAsp < vAsp) { ch = PW / vAsp; oy = (PH - ch) / 2; } else if (pAsp > vAsp) { cw = PH * vAsp; ox = (PW - cw) / 2; }
+    let sx = ox + (fx - fw * m) * cw, sy = oy + (fy - fh * m) * ch, sw = fw * (1 + 2 * m) * cw, sh = fh * (1 + 2 * m) * ch;
+    sx = Math.max(0, sx); sy = Math.max(0, sy); sw = Math.min(PW - sx, sw); sh = Math.min(PH - sy, sh);
+
+    // Barcode first on the sharp still
+    if (dmReady && $('useDM').checked) {
+      const k = Math.min(1, 2400 / sw);
+      const bc = document.createElement('canvas'); bc.width = Math.round(sw * k); bc.height = Math.round(sh * k);
+      const bx = bc.getContext('2d', { willReadFrequently: true }); bx.drawImage(still, sx, sy, sw, sh, 0, 0, bc.width, bc.height);
+      const res = await ZXingWASM.readBarcodes(bx.getImageData(0, 0, bc.width, bc.height),
+        { formats: ['DataMatrix', 'QRCode'], tryHarder: true, tryRotate: true, tryInvert: true, maxNumberOfSymbols: 1 });
+      if (res.length && res[0].isValid && label === cur.id) onBarcode(res[0].text, res[0].format);
+    }
+    // OCR: 2 image variants x 2 layout modes = 4 independent reads into the same consensus
+    if (ocrReady && $('useOCR').checked && !cur.done) {
+      const W = Math.min(2000, Math.max(1400, sw));
+      const plain = preprocess(still, sx, sy, sw, sh, W, false).canvas;
+      const sharp = preprocess(still, sx, sy, sw, sh, W, true).canvas;
+      const jobs = [];
+      for (const w of ocrWorkers) for (const img of [plain, sharp]) jobs.push(w.recognize(img).then(x => ({ data: x.data, img })));
+      const outs = await Promise.allSettled(jobs);
+      let reads = 0;
+      for (const o of outs) {
+        if (o.status !== 'fulfilled' || label !== cur.id || cur.done) continue;
+        const found = o.value.data.confidence >= 20 ? parseText(o.value.data.text) : {};
+        if (Object.keys(found).length) reads++;
+        addOcrReadings(found);
+        showDebug(o.value.img, o.value.data);
+      }
+      stats.ocr.push(performance.now());
+      render();
+      if (!cur.done && allDone()) onComplete();
+      else if (!cur.done) showFlash(reads ? `Read ${reads}/4 — snap again to confirm` : 'No text found — refocus and snap again');
+    }
+  } catch (e) {
+    showFlash('Snap failed: ' + e.message);
+  } finally {
+    snapping = false; btn.disabled = false; btn.textContent = 'Snap';
+  }
+};
+
+// ---------- Text parsing + format validation ----------
+function parseText(text) {
+  const t = text.toUpperCase().replace(/[|\\]/g, '/');
+  const out = {};
+  const snLen = +$('snLen').value || 10;
+
+  // Serial: "S/N", "SN#", "SN:", "SERIAL NO" (OCR may read S/N as SIN, S1N)
+  const sn = /\b(?:S\s*[\/I1LA]?\s*N|SERIAL(?:\s*N[O0])?)\s*[#:;.,]?\s*([A-Z0-9]{6,16})\b/.exec(t);
+  if (sn && sn[1].length === snLen && /[A-Z]/.test(sn[1]) && /\d/.test(sn[1])) out.sn = sn[1];
+
+  // Part #: "P/N", "PRODID", "PROD ID", "PRODUCT NO", "PID"  e.g. 5TW13AA#ABA, BB3Q4UT#ABA
+  const PNL = '(?:P\\s*[\\/I1LA]?\\s*N|PR[O0]D\\s*[I1L][D0O]|PR[O0]DUCT(?:\\s*(?:N[O0]|NUMBER|[I1L]D))?|P[I1L]D)';
+  const pn = new RegExp('\\b' + PNL + '\\s*[#:;.,]?\\s*([A-Z0-9]{5,8}?)\\s*[#H4AF]?\\s*([A-Z0-9]{3})\\b').exec(t)
+          || new RegExp('\\b' + PNL + '\\s*[#:;.,]?\\s*([A-Z0-9]{5,8})\\b').exec(t);
+  if (pn) {
+    // Snap to a known part number when OCR confused look-alike characters (5/S, 1/I, 0/O ...)
+    const base = matchKnownPart(pn[1]);
+    const opt = pn[2] ? pn[2].replace(/0/g, 'O').replace(/8/g, 'B').replace(/4/g, 'A') : '';
+    if (base) out.pn = opt ? base + '#' + opt : base;
+    else if (/[A-Z]/.test(pn[1]) && /\d/.test(pn[1])) out.pn = opt ? pn[1] + '#' + opt : pn[1];
+  }
+
+  // MAC: six hex pairs; O read for 0 is corrected
+  const mac = /\bMAC\s*[:;.]?\s*((?:[0-9A-FO]{2}\s*[-:.]?\s*){5}[0-9A-FO]{2})/.exec(t)
+           || /\b((?:[0-9A-F]{2}[-:]){5}[0-9A-F]{2})\b/.exec(t);
+  if (mac) {
+    const hex = mac[1].replace(/O/g, '0').replace(/[^0-9A-F]/g, '');
+    if (hex.length === 12) out.mac = hex.match(/../g).join('-');
+  }
+
+  // Model line, e.g. "HP PROBOOK 4 G11 16" / "HP USB-C/A UNIVERSAL DOCK G2"
+  const model = /\bHP\s+[A-Z0-9][A-Z0-9 \/\-]{4,40}/.exec(t);
+  if (model) out.model = model[0].replace(/\s+/g, ' ').trim();
+  return out;
+}
+
+const LOOKALIKE = [['5','S'],['1','I'],['1','L'],['0','O'],['0','D'],['8','B'],['2','Z'],['6','G'],['3','S'],['4','A'],['7','T']];
+function sameish(a, b) { return a === b || LOOKALIKE.some(([x, y]) => (a === x && b === y) || (a === y && b === x)); }
+function matchKnownPart(raw) {
+  if (KNOWN_PN[raw]) return raw;
+  const hits = Object.keys(KNOWN_PN).filter(k => k.length === raw.length && [...k].every((ch, i) => sameish(ch, raw[i])));
+  return hits.length === 1 ? hits[0] : null;      // ambiguous -> no snap
+}
+
+// ---------- Consensus + state ----------
+let labelSeq = 0;
+function resetCurrent() {
+  cur = { id: ++labelSeq, tallies: {}, locked: {}, conflicts: {}, dmRaw: null, dmSeen: false, done: false };
+  FIELDS.forEach(f => { cur.tallies[f.key] = new Map(); cur.locked[f.key] = null; });
+  sharpHist.length = 0;
+  guide.classList.remove('locked', 'hit', 'dup');
+  render();
+}
+
+function addOcrReadings(found) {
+  const need = +$('need').value || 3;
+  for (const [k, v] of Object.entries(found)) {
+    const m = cur.tallies[k];
+    m.set(v, (m.get(v) || 0) + 1);
+    if (cur.locked[k]) continue;
+    const ranked = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    const [best, c1] = ranked[0], c2 = ranked[1] ? ranked[1][1] : 0;
+    if (c1 >= need && c1 >= c2 * 2) cur.locked[k] = { value: best, source: 'ocr' };
+  }
+}
+
+function required() {
+  const r = [];
+  if ($('reqSN').checked) r.push('sn');
+  if ($('reqPN').checked) r.push('pn');
+  if ($('reqMAC').checked) r.push('mac');
+  return r;
+}
+function allDone() { return required().every(k => cur.locked[k]); }
+
+function onComplete() {
+  if (cur.done) return;
+  cur.done = true;
+  render();
+  if (!$('autoNext').checked) {
+    guide.classList.add('locked');
+    showFlash('Verified — tap box to save');
+    alertUser(true);
+    return;
+  }
+  const saved = saveCurrent();
+  if (saved) {
+    guide.classList.add('locked');
+    showFlash('✔ ' + (cur.locked.sn ? cur.locked.sn.value : 'Saved'));
+    alertUser(true);
+    lastDupSn = null;
+  } else {
+    guide.classList.add('dup');
+    const sn = cur.locked.sn && cur.locked.sn.value;
+    showFlash('Already scanned');
+    if (sn !== lastDupSn) alertUser(false);   // only buzz once while parked on the same label
+    lastDupSn = sn;
+  }
+  setTimeout(resetCurrent, 900);
+}
+
+// ---------- Rendering ----------
+function render() {
+  // Barcode card
+  const dmCard = $('dmCard'), dmBadge = $('dmBadge');
+  if (cur.dmRaw) {
+    $('dmVal').textContent = cur.dmRaw;
+    dmBadge.textContent = 'decoded ✓'; dmBadge.className = 'badge ok'; dmCard.classList.add('done');
+  } else {
+    $('dmVal').textContent = $('useDM').checked ? 'Point at the square code next to the serial' : 'off';
+    dmBadge.textContent = 'searching'; dmBadge.className = 'badge'; dmCard.classList.remove('done');
+  }
+
+  const need = +$('need').value || 3;
+  const req = required();
+  const box = $('fields');
+  box.innerHTML = '';
+  for (const f of FIELDS) {
+    const m = cur.tallies[f.key], L = cur.locked[f.key];
+    const ranked = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    const top = ranked[0];
+    const el = document.createElement('div');
+    el.className = 'card' + (L ? ' done' : '');
+    const label = L ? { barcode: 'From barcode', ocr: 'OCR verified', manual: 'Picked' }[L.source] : null;
+    const badge = L
+      ? `<span class="badge ok">${label}</span>`
+      : `<span class="badge ${top ? 'warn' : ''}">${top ? top[1] + '/' + need + ' reads' : (req.includes(f.key) ? 'required' : 'optional')}</span>`;
+    const pct = L ? 100 : top ? Math.min(100, top[1] / need * 100) : 0;
+    el.innerHTML = `
+      <div class="top"><span class="name">${f.label}</span>${badge}</div>
+      <div class="val">${esc(L ? L.value : top ? top[0] : '—')}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>`;
+
+    // Cross-check notes
+    const notes = [];
+    if (L && L.source === 'barcode' && top) {
+      if (top[0] === L.value) notes.push(['ok', 'OCR text agrees with barcode']);
+      else notes.push(['bad', `OCR read ${top[0]} — barcode value used`]);
+    }
+    if (cur.conflicts[f.key]) notes.push(['bad', `Earlier pick ${cur.conflicts[f.key]} replaced by barcode`]);
+    if (f.key === 'pn' && L) {
+      const base = L.value.split('#')[0];
+      if (KNOWN_PN[base]) {
+        notes.push(['ok', 'Known part: ' + KNOWN_PN[base]]);
+        const model = cur.locked.model?.value || (cur.tallies.model.size ? [...cur.tallies.model.entries()].sort((a, b) => b[1] - a[1])[0][0] : null);
+        if (model) {
+          const words = KNOWN_PN[base].toUpperCase().match(/[A-Z0-9]{2,}/g) || [];
+          const hits = words.filter(w => model.includes(w)).length;
+          if (hits < Math.ceil(words.length / 2)) notes.push(['bad', 'Model text doesn’t match the known part — double-check']);
+        }
+      }
+    }
+    notes.forEach(([cls, txt]) => {
+      const d = document.createElement('div');
+      d.className = 'note ' + cls;
+      d.textContent = (cls === 'ok' ? '✔ ' : '⚠ ') + txt;
+      el.appendChild(d);
+    });
+
+    // Tap-to-accept candidates
+    if (!L && ranked.length) {
+      const cands = document.createElement('div');
+      cands.className = 'cands';
+      ranked.slice(0, 4).forEach(([v, c]) => {
+        const b = document.createElement('button');
+        b.className = 'cand';
+        b.textContent = `${v} ×${c}`;
+        b.onclick = () => { cur.locked[f.key] = { value: v, source: 'manual' }; render(); if (allDone()) onComplete(); };
+        cands.appendChild(b);
+      });
+      el.appendChild(cands);
+    }
+    box.appendChild(el);
+  }
+}
+
+function showDebug(c, data) {
+  if (!$('preview').closest('details').open) return;
+  const p = $('preview');
+  p.width = c.width; p.height = c.height;
+  p.getContext('2d').drawImage(c, 0, 0);
+  $('raw').textContent = `confidence ${Math.round(data.confidence)}\n` + data.text;
+}
+
+function rateLoop() {
+  const tick = () => {
+    if (!running) { $('rates').textContent = 'paused'; return; }
+    const now = performance.now();
+    for (const k of ['dm', 'ocr']) while (stats[k].length && now - stats[k][0] > 3000) stats[k].shift();
+    $('rates').textContent = `barcode ${(stats.dm.length / 3).toFixed(1)}/s · OCR ${(stats.ocr.length / 3).toFixed(1)}/s`;
+    setTimeout(tick, 500);
+  };
+  tick();
+}
+
+// ---------- Saved scans ----------
+function saveCurrent() {
+  const v = k => cur.locked[k] ? cur.locked[k].value : '';
+  const sn = v('sn');
+  if (sn && records.some(r => r.sn === sn)) { statusEl.textContent = 'Already in list: ' + sn; return false; }
+  const base = v('pn').split('#')[0];
+  const srcs = new Set(required().map(k => cur.locked[k] && cur.locked[k].source).filter(Boolean));
+  const rec = {
+    sn, pn: v('pn'), mac: v('mac'),
+    model: KNOWN_PN[base] || v('model'),
+    source: [...srcs].sort().join('+'),
+    barcode: cur.dmRaw || '',
+    at: new Date().toISOString(),
+    actions: {}
+  };
+  records.unshift(rec);
+  persist(); renderList();
+  statusEl.textContent = 'Saved ' + (sn || 'scan') + ' (' + records.length + ' total)';
+  if (station) sendToStation(rec, stationActions());
+  return true;
+}
+
+// ---------- Scan station (local ScanStation.ps1 server) ----------
+let station = null;
+const ACT_LABEL = { zebra: 'Zebra', laser: 'Laser', ivanti: 'Ivanti' };
+
+async function detectStation() {
+  if (location.protocol !== 'http:' || !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return;
+  try {
+    const r = await fetch('/api/status', { headers: { 'X-ScanStation': '1' }, cache: 'no-store' });
+    if (!r.ok) return;
+    station = await r.json();
+  } catch (_) { return; }
+  Object.assign(KNOWN_PN, station.catalog || {});
+  $('stationCard').hidden = false;
+  $('actHead').hidden = false;
+  const box = (id, on, key) => { $(id).checked = on && lsGet('st_' + key) !== '0'; $(id).disabled = !on;
+    $(id).onchange = () => lsSet('st_' + key, $(id).checked ? '1' : '0'); };
+  box('stZebra', station.zebra.enabled, 'zebra');
+  box('stLaser', station.laser.enabled, 'laser');
+  const ivOn = station.ivanti.mode !== 'Off';
+  box('stIvanti', ivOn, 'ivanti');
+  $('ivMode').textContent = '(' + station.ivanti.mode + ')';
+  $('stationInfo').textContent =
+    `Zebra: ${station.zebra.enabled ? station.zebra.url : 'disabled'} · Laser: ${station.laser.enabled ? station.laser.printer : 'disabled'} · Ivanti: ${ivOn ? station.ivanti.mode + ' → ' + station.ivanti.baseUrl : 'off'}`;
+  renderList();
+}
+
+function stationActions() {
+  return { zebra: $('stZebra').checked, laser: $('stLaser').checked, ivanti: $('stIvanti').checked };
+}
+
+async function sendToStation(rec, actions) {
+  const keys = Object.keys(actions).filter(k => actions[k]);
+  if (!keys.length) return;
+  rec.actions = rec.actions || {};
+  keys.forEach(k => rec.actions[k] = { status: 'Pending', detail: 'Sending…' });
+  renderList();
+  try {
+    const r = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-ScanStation': '1' },
+      body: JSON.stringify({ sn: rec.sn, pn: rec.pn, model: rec.model, mac: rec.mac, source: rec.source, actions })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    keys.forEach(k => rec.actions[k] = (j.results && j.results[k]) || { status: 'Error', detail: 'No result returned' });
+  } catch (e) {
+    keys.forEach(k => rec.actions[k] = { status: 'Error', detail: 'Station unreachable: ' + e.message });
+  }
+  persist(); renderList();
+  const bad = keys.filter(k => rec.actions[k].status === 'Error');
+  if (bad.length) { showFlash('⚠ ' + bad.map(k => ACT_LABEL[k]).join(', ') + ' failed'); alertUser(false); }
+}
+
+function renderList() {
+  $('count').textContent = records.length ? '(' + records.length + ')' : '';
+  $('list').innerHTML = records.map((r, i) => {
+    let act = '';
+    if (station) {
+      const a = r.actions || {};
+      act = '<td>' + Object.keys(ACT_LABEL).filter(k => a[k]).map(k =>
+        `<span class="act ${esc(a[k].status)}" title="${esc(a[k].detail)}">${ACT_LABEL[k]}: ${esc(a[k].status)}</span>`).join('') +
+        `<div><button class="del reprint" data-i="${i}" title="Print Zebra label and laser sheet again">Reprint</button>` +
+        (station.ivanti.mode !== 'Off' ? ` <button class="del resend" data-i="${i}" title="Run the Ivanti step again">Ivanti</button>` : '') +
+        '</div></td>';
+    }
+    return `
+    <tr>
+      <td class="mono">${esc(r.sn)}<div class="src">${esc(r.source)}</div></td>
+      <td class="mono">${esc(r.pn)}</td>
+      <td>${esc(r.model)}${r.mac ? '<div class="src mono">' + esc(r.mac) + '</div>' : ''}</td>
+      ${act}
+      <td><button class="del remove" data-i="${i}" title="Remove">×</button></td>
+    </tr>`;
+  }).join('');
+}
+$('list').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  const r = records[+b.dataset.i];
+  if (!r) return;
+  if (b.classList.contains('remove')) {
+    if (confirm('Remove ' + (r.sn || 'this scan') + ' from this list?')) { records.splice(+b.dataset.i, 1); persist(); renderList(); }
+  } else if (b.classList.contains('reprint')) {
+    sendToStation(r, { zebra: $('stZebra').checked, laser: $('stLaser').checked, ivanti: false });
+  } else if (b.classList.contains('resend')) {
+    sendToStation(r, { zebra: false, laser: false, ivanti: true });
+  }
+});
+
+function loadRecords() {
+  try { return JSON.parse(localStorage.getItem('labelScanRecords') || '[]'); } catch (_) { return []; }
+}
+function persist() {
+  try { localStorage.setItem('labelScanRecords', JSON.stringify(records)); } catch (_) {}
+}
+
+$('csvBtn').onclick = () => {
+  const cols = ['SerialNumber', 'PartNumber', 'MAC', 'Model', 'Source', 'BarcodeRaw', 'ScannedAt', 'Zebra', 'Laser', 'Ivanti', 'IvantiDetail'];
+  const q = s => '"' + String(s ?? '').replace(/"/g, '""') + '"';
+  const st = (r, k) => (r.actions && r.actions[k]) ? r.actions[k].status : '';
+  const rows = records.map(r => [r.sn, r.pn, r.mac, r.model, r.source, r.barcode, r.at,
+    st(r, 'zebra'), st(r, 'laser'), st(r, 'ivanti'), (r.actions && r.actions.ivanti) ? r.actions.ivanti.detail : ''].map(q).join(','));
+  const blob = new Blob([cols.join(',') + '\r\n' + rows.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'label-scans-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+};
+$('clearBtn').onclick = () => { if (confirm('Clear all saved scans?')) { records = []; persist(); renderList(); } };
+
+// ---------- Camera picker ----------
+async function fillCameraList() {
+  try {
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const sel = $('camSel');
+    if (cams.length < 2) { sel.hidden = true; return; }
+    const curId = track && track.getSettings ? track.getSettings().deviceId : '';
+    sel.innerHTML = cams.map((c, i) => `<option value="${esc(c.deviceId)}"${c.deviceId === curId ? ' selected' : ''}>${esc(c.label || 'Camera ' + (i + 1))}</option>`).join('');
+    sel.hidden = false;
+  } catch (_) {}
+}
+$('camSel').onchange = async () => {
+  const id = $('camSel').value;
+  lsSet('labelScanCamera', id);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { deviceId: { exact: id }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } } });
+    video.srcObject = stream; await video.play();
+    track = stream.getVideoTracks()[0];
+    await setupCameraControls();
+    sharpHist.length = 0;
+  } catch (e) { alert('Could not switch camera: ' + e.message); }
+};
+function lsGet(k) { try { return localStorage.getItem(k) || ''; } catch (_) { return ''; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+
+// ---------- Controls ----------
+$('startBtn').onclick = startCamera;
+$('pauseBtn').onclick = () => {
+  running = !running;
+  $('pauseBtn').textContent = running ? 'Pause' : 'Resume';
+  statusEl.textContent = running ? 'Scanning…' : 'Paused';
+  if (running) { dmLoop(); ocrLoop(); rateLoop(); }
+};
+$('resetBtn').onclick = resetCurrent;
+['reqSN', 'reqPN', 'reqMAC', 'need', 'snLen', 'useDM', 'useOCR'].forEach(id => $(id).addEventListener('change', render));
+guide.addEventListener('click', () => {
+  if (cur.done && !$('autoNext').checked) { saveCurrent(); resetCurrent(); }
+});
+
+// ---------- Helpers ----------
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+let flashT;
+function showFlash(txt) {
+  const f = $('flash'); f.textContent = txt; f.classList.add('show');
+  clearTimeout(flashT); flashT = setTimeout(() => f.classList.remove('show'), 850);
+}
+let actx;
+function alertUser(good) {
+  try { navigator.vibrate && navigator.vibrate(good ? [50, 30, 50] : 150); } catch (_) {}
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = good ? 1250 : 500; g.gain.value = 0.08;
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + 0.12);
+  } catch (_) {}
+}
+
+resetCurrent();
+renderList();
+paintBox();
+setReadyStatus();
+detectStation();
+initDM().catch(e => { statusEl.textContent = 'Barcode failed: ' + e.message; }).finally(setReadyStatus);
+initOCR().catch(e => { statusEl.textContent = 'OCR failed: ' + e.message; }).finally(setReadyStatus);
+})();
+</script>
+</body>
+</html>
